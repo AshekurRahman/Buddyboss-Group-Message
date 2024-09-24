@@ -464,78 +464,55 @@ class BP_Messages_Thread
 		$messages = wp_cache_get($cache_key, 'bp_messages_threads');
 
 		if (false === $messages || static::$noCache) {
-			// if current user isn't the recpient, then return empty array.
+			// if current user isn't the recipient, then return an empty array.
 			if (!static::is_thread_recipient($thread_id) && !bp_current_user_can('bp_moderate')) {
 				wp_cache_set($cache_key, false, 'bp_messages_threads');
-
 				return array();
 			}
-
+			
 			$last_deleted_timestamp = static::$last_deleted_message ? static::$last_deleted_message->date_sent : '0000-00-00 00:00';
-
+			
 			/**--------------------------------------- */
 			$group_joined_date = '';
-
 			$first_message = BP_Messages_Thread::get_first_message($thread_id);
 			$group_id = (int) bp_messages_get_meta($first_message->id, 'group_id', true);
 
-
 			if (!empty($group_id)) {
-
 				$current_group_member = new BP_Groups_Member(bp_current_user_id(), $group_id);
-
 				if (!empty($current_group_member->id)) {
 					$joined_date = groups_get_membermeta($current_group_member->id, 'joined_date');
 					if (empty($joined_date)) {
 						$joined_date = groups_get_membermeta($current_group_member->id, 'membership_accept_date');
 					}
-
 					if (!empty($joined_date)) {
-						$joined_date = bb_get_thread_start_date($joined_date, true);
+						$group_joined_date = $joined_date;
 					}
-
-					$group_joined_date = $joined_date;
 				}
 			}
 
-			$after = date('Y-m-d H:i:s', strtotime($group_joined_date));
-
+			// If group joined date is found, use it; otherwise, fallback to a very early date.
+			$after = !empty($group_joined_date) ? date('Y-m-d H:i:s', strtotime($group_joined_date)) : '0000-00-00 00:00';
+			
 			if (!$before) {
 				$before = bp_core_current_time();
-				// $before = gmdate( 'Y-m-d H:i:s', ( time() + ( get_option( 'gmt_offset' ) * HOUR_IN_SECONDS + 1 ) ) );
 			}
 
-			// Added last_deleted_id in the sql.
+			// Add custom filter to modify the query
 			add_filter('bp_messages_message_get_where_conditions', array(__CLASS__, 'bp_filter_messages_message_get_where_conditions'), 10, 2);
 
 			$query = BP_Messages_Message::get(
 				array(
 					'include_threads' => $thread_id,
 					'date_query' => array(
-						'after' => $after,  // Fetch messages after the user's join date
-						'before' => $before, // Optional: Fetch messages before a certain date (current time)
+						'after' => max($last_deleted_timestamp, $after), // Fetch messages after the user's join date or last deleted date
+						'before' => $before,
 						'inclusive' => true, // Include messages on the exact join date
 					),
 					'per_page' => $perpage,
 				)
 			);
 
-
-			// $query = BP_Messages_Message::get(
-			// 	array(
-			// 		'include_threads' => $thread_id,
-			// 		'date_query' => array(
-			// 			'after' => $last_deleted_timestamp,
-			// 			'before' => $before,
-			// 			'inclusive' => true,
-			// 		),
-			// 		//	'per_page' => $perpage,
-			// 		'per_page' => $perpage,
-			// 	)
-			// );
-
-
-			// Removed last_deleted_id in the sql.
+			// Remove custom filter after query execution
 			remove_filter('bp_messages_message_get_where_conditions', array(__CLASS__, 'bp_filter_messages_message_get_where_conditions'), 10, 2);
 
 			$messages = (!empty($query['messages']) ? $query['messages'] : array());
@@ -543,7 +520,7 @@ class BP_Messages_Thread
 			wp_cache_set($cache_key, (array) $messages, 'bp_messages_threads');
 		}
 
-		// Integer casting.
+		// Ensure all IDs are properly cast to integers
 		foreach ($messages as $key => $data) {
 			if (isset($messages[$key]->id)) {
 				$messages[$key]->id = (int) $messages[$key]->id;
@@ -558,6 +535,7 @@ class BP_Messages_Thread
 
 		return $messages;
 	}
+
 
 
 	/**
